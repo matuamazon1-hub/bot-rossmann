@@ -5,13 +5,13 @@ from flask import Flask
 from threading import Thread
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN (SUSTITUYE ESTOS DATOS)
+# ⚙️ CONFIGURACIÓN
 # ==========================================
-ID_PRODUCTO = "0196214140189"  # ID o EAN de 13 dígitos del producto
-CODIGO_POSTAL = "90402"       # Código postal (PLZ) de la zona a buscar
-DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1541378828331516006/LFZo_P_nlcuAKjHT03E_r7OGf94PkgN-hHOCV-eQTCg4Xmtrfqr0nvFjnmnzNOOrIW3Y"  # Tu Webhook de Discord
+ID_PRODUCTO = "0196214140189"  # ID o EAN del producto
+CODIGO_POSTAL = "90402"       # Código postal (PLZ) en Alemania
+DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1541378828331516006/LFZo_P_nlcuAKjHT03E_r7OGf94PkgN-hHOCV-eQTCg4Xmtrfqr0nvFjnmnzNOOrIW3Y"
 
-# Servidor Flask básico para que Render no suspenda el servicio gratis
+# Servidor Flask básico para que Render no apague el servicio
 app = Flask('')
 
 @app.route('/')
@@ -38,7 +38,6 @@ def consultar_stock_tienda():
             datos = respuesta.json()
             tiendas = datos.get("stores", [])
             
-            # Recorrer las tiendas cercanas devueltas por la API
             for tienda in tiendas:
                 if tienda.get("available") is True:
                     nombre = tienda.get("name", "Tienda Rossmann")
@@ -54,22 +53,22 @@ def consultar_stock_tienda():
                     )
                     
                     enviar_alerta_discord(mensaje)
-                    print(f"[!] Stock detectado en: {nombre}")
+                    print(f"[!] Stock detectado en: {nombre}", flush=True)
                     return True
 
-            print(f"[{time.strftime('%H:%M:%S')}] Sin stock en el código postal {CODIGO_POSTAL}.")
+            print(f"[{time.strftime('%H:%M:%S')}] Sin stock en el código postal {CODIGO_POSTAL}.", flush=True)
         else:
-            print(f"Error HTTP {respuesta.status_code} al consultar la API.")
+            print(f"Error HTTP {respuesta.status_code} al consultar la API.", flush=True)
 
     except Exception as e:
-        print(f"Error de conexión: {e}")
+        print(f"Error de conexión: {e}", flush=True)
 
 def enviar_alerta_discord(mensaje):
     payload = {"content": mensaje}
     try:
         requests.post(DISCORD_WEBHOOK, json=payload)
     except Exception as e:
-        print(f"Error enviando mensaje a Discord: {e}")
+        print(f"Error enviando mensaje a Discord: {e}", flush=True)
 
 # ==========================================
 # 🔄 BUCLE PRINCIPAL
@@ -77,10 +76,8 @@ def enviar_alerta_discord(mensaje):
 def loop_monitoreo():
     while True:
         consultar_stock_tienda()
-        time.sleep(300)  # Revisa cada 5 minutos (300 segundos)
+        time.sleep(300)  # Revisa cada 5 minutos
 
 if __name__ == "__main__":
-    # Iniciar el servidor web en un hilo secundario
     Thread(target=run_flask).start()
-    # Iniciar el monitor de stock en el hilo principal
     loop_monitoreo()
