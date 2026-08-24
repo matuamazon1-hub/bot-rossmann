@@ -11,7 +11,6 @@ ID_PRODUCTO = "0196214140189"  # ID o EAN del producto
 CODIGO_POSTAL = "90402"       # Código postal (PLZ) en Alemania
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1541378828331516006/LFZo_P_nlcuAKjHT03E_r7OGf94PkgN-hHOCV-eQTCg4Xmtrfqr0nvFjnmnzNOOrIW3Y"
 
-# Servidor Flask básico para que Render no apague el servicio
 app = Flask('')
 
 @app.route('/')
@@ -27,15 +26,25 @@ def run_flask():
 # ==========================================
 def consultar_stock_tienda():
     url = f"https://www.rossmann.de/de/service-und-hilfe/filialfinder/api/availability/{ID_PRODUCTO}?zip={CODIGO_POSTAL}"
+    
+    # Cabeceras avanzadas para evitar bloqueos
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Referer": "https://www.rossmann.de/de/service-und-hilfe/filialfinder.html"
     }
 
     try:
         respuesta = requests.get(url, headers=headers, timeout=10)
         
         if respuesta.status_code == 200:
-            datos = respuesta.json()
+            try:
+                datos = respuesta.json()
+            except ValueError:
+                print(f"[{time.strftime('%H:%M:%S')}] La web ha bloqueado la consulta temporalmente (Respuesta no-JSON).", flush=True)
+                return
+
             tiendas = datos.get("stores", [])
             
             for tienda in tiendas:
@@ -58,10 +67,10 @@ def consultar_stock_tienda():
 
             print(f"[{time.strftime('%H:%M:%S')}] Sin stock en el código postal {CODIGO_POSTAL}.", flush=True)
         else:
-            print(f"Error HTTP {respuesta.status_code} al consultar la API.", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}] Error HTTP {respuesta.status_code} al consultar la API.", flush=True)
 
     except Exception as e:
-        print(f"Error de conexión: {e}", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}] Error de conexión: {e}", flush=True)
 
 def enviar_alerta_discord(mensaje):
     payload = {"content": mensaje}
