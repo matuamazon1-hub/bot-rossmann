@@ -1,87 +1,110 @@
 import os
 import time
-import requests
-from bs4 import BeautifulSoup
+import cloudscraper
 from flask import Flask
 from threading import Thread
 
 # ==========================================
-# ⚙️ CONFIGURACIÓN
+# ⚙️ CONFIGURACIÓN DE BÚSQUEDA
 # ==========================================
-ID_PRODUCTO = "0196214140189"
-CODIGO_POSTAL = "90402"
+# Código EAN de 13 dígitos del producto de Pokémon
+ID_PRODUCTO = "0196214140189"  
+
+# Código Postal (PLZ) de la ciudad donde quieres buscar tiendas físicas
+CODIGO_POSTAL = "90419"       
+
+# Tu Webhook de Discord
 DISCORD_WEBHOOK = "https://discord.com/api/webhooks/1541378828331516006/LFZo_P_nlcuAKjHT03E_r7OGf94PkgN-hHOCV-eQTCg4Xmtrfqr0nvFjnmnzNOOrIW3Y"
 
+# Servidor básico para mantener Render activo
 app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot de Rossmann activo."
+    return "Bot de Inventario Físico de Tiendas Rossmann Activo."
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 # ==========================================
-# 🔍 COMPROBACIÓN VÍA NAVEGACIÓN WEB REAL
+# 🔍 CONSULTA DE INVENTARIO FÍSICO INTERNO
 # ==========================================
-def consultar_stock():
-    # URL pública del producto en la web alemana
-    url = f"https://www.rossmann.de/de/p/{ID_PRODUCTO}"
+def consultar_inventario_tienda():
+    # API interna del buscador de filiales / inventario físico
+    url = f"https://www.rossmann.de/de/service-und-hilfe/filialfinder/api/availability/{ID_PRODUCTO}?zip={CODIGO_POSTAL}"
     
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
-    }
+    # Creamos sesión con Cloudscraper para simular la app oficial
+    scraper = cloudscraper.create_scraper(
+        browser={
+            'browser': 'chrome',
+            'platform': 'android',
+            'desktop': False
+        }
+    )
 
     try:
-        session = requests.Session()
-        respuesta = session.get(url, headers=headers, timeout=15)
+        respuesta = scraper.get(url, timeout=12)
         
         if respuesta.status_code == 200:
-            soup = BeautifulSoup(respuesta.text, 'html.parser')
+            datos = respuesta.json()
+            tiendas = datos.get("stores", [])
             
-            # Buscar indicadores de falta de stock en el HTML
-            texto_pagina = soup.get_text().lower()
-            
-            # Términos comunes de falta de stock en Rossmann
-            agotado = "nicht lieferbar" in texto_pagina or "ausverkauft" in texto_pagina
-            
-            if not agotado:
+            tiendas_con_stock = []
+
+            for tienda in tiendas:
+                # Comprobar si la pistola de la tienda marca disponible (True o cantidad > 0)
+                if tienda.get("available") is True or tienda.get("stock", 0) > 0:
+                    nombre = tienda.get("name", "Rossmann Filiale")
+                    direccion = tienda.get("street", "")
+                    ciudad = tienda.get("city", "")
+                    unidades = tienda.get("stock", "Disponible")
+                    
+                    tiendas_con_stock.append(
+                        f"📍 **{nombre}**\n"
+                        f"   └ Dirección: {direccion}, {ciudad}\n"
+                        f"   └ Stock reportado: `{unidades}`"
+                    )
+
+            # SI HAY TIENDAS CON STOCK -> AVISAR A DISCORD
+            if tiendas_con_stock:
+                lista_detallada = "\n\n".join(tiendas_con_stock)
                 mensaje = (
-                    f"🚨 **¡POSIBLE STOCK DETECTADO EN ROSSMANN!** 🚨\n"
-                    f"**Producto:** `{ID_PRODUCTO}`\n"
-                    f"**Enlace:** {url}\n"
-                    f"**Estado:** Revisa la disponibilidad de recogida en tu tienda ({CODIGO_POSTAL})."
+                    f"🚨 **¡CARTAS DE PÓKEMON DETECTADAS EN TIENDA FÍSICA!** 🚨\n\n"
+                    f"**EAN del producto:** `{ID_PRODUCTO}`\n"
+                    f"**Código Postal (PLZ):** `{CODIGO_POSTAL}`\n\n"
+                    f"**Tiendas físicas que las tienen físicas en el estante:**\n"
+                    f"{lista_detallada}\n\n"
+                    f"⚡ *Corre a la tienda física antes de que las compren.*"
                 )
                 enviar_alerta_discord(mensaje)
-                print(f"[{time.strftime('%H:%M:%S')}] ¡Stock o cambio de estado detectado!", flush=True)
+                print(f"[{time.strftime('%H:%M:%S')}] ¡INVENTARIO ENCONTRADO EN TIENDA FÍSICA!", flush=True)
+                return True
             else:
-                print(f"[{time.strftime('%H:%M:%S')}] Producto sin stock en la web.", flush=True)
+                # SI NO HAY STOCK -> SILENCIO TOTAL EN DISCORD (solo log interno)
+                print(f"[{time.strftime('%H:%M:%S')}] Comprobado inventario PLZ {CODIGO_POSTAL}: Sin unidades en las estanterías de las tiendas de la zona.", flush=True)
         
-        elif respuesta.status_code == 403:
-            print(f"[{time.strftime('%H:%M:%S')}] Petición bloqueada por el servidor (HTTP 403). Reintentando en 5 min...", flush=True)
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] Respuesta inesperada HTTP: {respuesta.status_code}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}] Servidor de inventario respondió con estado HTTP: {respuesta.status_code}", flush=True)
 
     except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] Error en la consulta: {e}", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}] Error al consultar inventario: {e}", flush=True)
 
 def enviar_alerta_discord(mensaje):
     payload = {"content": mensaje}
     try:
-        requests.post(DISCORD_WEBHOOK, json=payload, timeout=5)
+        scraper = cloudscraper.create_scraper()
+        scraper.post(DISCORD_WEBHOOK, json=payload, timeout=5)
     except Exception as e:
-        print(f"Error enviando a Discord: {e}", flush=True)
+        print(f"Error enviando notificación a Discord: {e}", flush=True)
 
 # ==========================================
-# 🔄 BUCLE PRINCIPAL
+# 🔄 BUCLE DE MONITOREO
 # ==========================================
 def loop_monitoreo():
     while True:
-        consultar_stock()
-        time.sleep(300)  # Revisa cada 5 minutos
+        consultar_inventario_tienda()
+        time.sleep(300)  # Consulta cada 5 minutos
 
 if __name__ == "__main__":
     Thread(target=run_flask).start()
