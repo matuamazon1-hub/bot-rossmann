@@ -1,6 +1,7 @@
 import os
 import time
 import requests
+from bs4 import BeautifulSoup
 from flask import Flask
 from threading import Thread
 
@@ -15,67 +16,57 @@ app = Flask('')
 
 @app.route('/')
 def home():
-    return "Bot de Rossmann (App API) activo."
+    return "Bot de Rossmann activo."
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
 # ==========================================
-# 🔍 CONSULTA VÍA API MÓVIL
+# 🔍 COMPROBACIÓN VÍA NAVEGACIÓN WEB REAL
 # ==========================================
-def consultar_stock_tienda():
-    # Endpoint directo de consulta de disponibilidad de la App
-    url = f"https://www.rossmann.de/de/service-und-hilfe/filialfinder/api/availability/{ID_PRODUCTO}"
+def consultar_stock():
+    # URL pública del producto en la web alemana
+    url = f"https://www.rossmann.de/de/p/{ID_PRODUCTO}"
     
-    params = {
-        "zip": CODIGO_POSTAL,
-        "radius": "15"  # Radio de búsqueda en km
-    }
-    
-    # User-Agent y cabeceras simulando la aplicación Android de Rossmann
     headers = {
-        "User-Agent": "RossmannApp/3.4.1 (Linux; Android 13; Mobile)",
-        "Accept": "application/json",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8"
     }
 
     try:
         session = requests.Session()
-        respuesta = session.get(url, headers=headers, params=params, timeout=12)
+        respuesta = session.get(url, headers=headers, timeout=15)
         
         if respuesta.status_code == 200:
-            datos = respuesta.json()
-            tiendas = datos.get("stores", [])
+            soup = BeautifulSoup(respuesta.text, 'html.parser')
             
-            for tienda in tiendas:
-                if tienda.get("available") is True or tienda.get("stock", 0) > 0:
-                    nombre = tienda.get("name", "Rossmann Filiale")
-                    direccion = tienda.get("street", "")
-                    ciudad = tienda.get("city", "")
-                    
-                    mensaje = (
-                        f"🚨 **¡STOCK EN TIENDA FÍSICA ROSSMANN!** 🚨\n"
-                        f"**Producto ID:** `{ID_PRODUCTO}`\n"
-                        f"**Tienda:** {nombre}\n"
-                        f"**Ubicación:** {direccion}, {ciudad} ({CODIGO_POSTAL})\n"
-                        f"**Estado:** ¡Disponible para recoger!"
-                    )
-                    
-                    enviar_alerta_discord(mensaje)
-                    print(f"[!] Stock detectado en: {nombre}", flush=True)
-                    return True
-
-            print(f"[{time.strftime('%H:%M:%S')}] Sin stock en el código postal {CODIGO_POSTAL}.", flush=True)
+            # Buscar indicadores de falta de stock en el HTML
+            texto_pagina = soup.get_text().lower()
+            
+            # Términos comunes de falta de stock en Rossmann
+            agotado = "nicht lieferbar" in texto_pagina or "ausverkauft" in texto_pagina
+            
+            if not agotado:
+                mensaje = (
+                    f"🚨 **¡POSIBLE STOCK DETECTADO EN ROSSMANN!** 🚨\n"
+                    f"**Producto:** `{ID_PRODUCTO}`\n"
+                    f"**Enlace:** {url}\n"
+                    f"**Estado:** Revisa la disponibilidad de recogida en tu tienda ({CODIGO_POSTAL})."
+                )
+                enviar_alerta_discord(mensaje)
+                print(f"[{time.strftime('%H:%M:%S')}] ¡Stock o cambio de estado detectado!", flush=True)
+            else:
+                print(f"[{time.strftime('%H:%M:%S')}] Producto sin stock en la web.", flush=True)
         
         elif respuesta.status_code == 403:
-            print(f"[{time.strftime('%H:%M:%S')}] Bloqueo HTTP 403. Reintentando en la siguiente ronda...", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}] Petición bloqueada por el servidor (HTTP 403). Reintentando en 5 min...", flush=True)
         else:
-            print(f"[{time.strftime('%H:%M:%S')}] Estado HTTP: {respuesta.status_code}", flush=True)
+            print(f"[{time.strftime('%H:%M:%S')}] Respuesta inesperada HTTP: {respuesta.status_code}", flush=True)
 
     except Exception as e:
-        print(f"[{time.strftime('%H:%M:%S')}] Error en la petición: {e}", flush=True)
+        print(f"[{time.strftime('%H:%M:%S')}] Error en la consulta: {e}", flush=True)
 
 def enviar_alerta_discord(mensaje):
     payload = {"content": mensaje}
@@ -89,8 +80,8 @@ def enviar_alerta_discord(mensaje):
 # ==========================================
 def loop_monitoreo():
     while True:
-        consultar_stock_tienda()
-        time.sleep(300)
+        consultar_stock()
+        time.sleep(300)  # Revisa cada 5 minutos
 
 if __name__ == "__main__":
     Thread(target=run_flask).start()
